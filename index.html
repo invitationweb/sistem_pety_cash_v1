@@ -35,8 +35,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-s
 .btn-full { width:100%; justify-content:center; }
 .btn:disabled { opacity:0.6; cursor:not-allowed; }
 
-.login-setup { margin-top:16px; padding-top:16px; border-top:1px solid #eee; }
-.login-setup p { font-size:11px; color:#aaa; text-align:center; margin-bottom:8px; }
+.login-actions { margin-top:16px; padding-top:16px; border-top:1px solid #eee; }
+.login-actions p { font-size:11px; color:#aaa; text-align:center; margin-bottom:8px; }
+.login-actions .btn-row { display:flex; gap:8px; }
 
 /* NAVBAR */
 #app { display:none; }
@@ -177,13 +178,16 @@ img.bon-thumb { width:50px; height:38px; object-fit:cover; border-radius:6px; cu
     <div id="loginErr" style="color:#e74c3c;font-size:12px;margin-bottom:10px;min-height:16px;"></div>
     <button class="btn btn-primary btn-full" onclick="doLogin()">Masuk</button>
     
-    <div class="login-setup" id="loginSetup">
-      <p>Admin pertama kali? Setup server dulu:</p>
-      <button class="btn btn-warning btn-full btn-sm" onclick="setupFromLogin()" id="btnSetupLogin">⚙️ Setup Server</button>
+    <div class="login-actions">
+      <p>Butuh data terbaru atau setup awal?</p>
+      <div class="btn-row">
+        <button class="btn btn-info btn-sm btn-full" onclick="refreshFromLogin()" id="btnRefreshLogin">🔄 Refresh Data</button>
+        <button class="btn btn-warning btn-sm btn-full" onclick="setupFromLogin()" id="btnSetupLogin">⚙️ Setup</button>
+      </div>
     </div>
     
     <p style="margin-top:14px;font-size:11px;text-align:center;color:#aaa;">
-      Default: admin/admin123 | staf1/staf123
+      💡 Data otomatis di-load dari server saat halaman dibuka
     </p>
   </div>
 </div>
@@ -282,12 +286,36 @@ async function setupFromLogin() {
   btn.textContent = "⏳ Memproses...";
   const res = await callServer("setup");
   btn.disabled = false;
-  btn.textContent = "⚙️ Setup Server";
+  btn.textContent = "⚙️ Setup";
   if (res.success) {
-    toast("✅ Setup berhasil! Silakan login.");
+    toast("✅ Setup berhasil!");
     alert(res.message + "\n\nSpreadsheet: " + res.spreadsheetUrl);
   } else {
     toast("❌ Setup gagal: " + res.message, "error");
+  }
+}
+
+// ============================================================
+// REFRESH DATA FROM LOGIN PAGE (FIX!)
+// ============================================================
+async function refreshFromLogin() {
+  const btn = document.getElementById("btnRefreshLogin");
+  if (!btn) return;
+  
+  btn.disabled = true;
+  btn.textContent = "⏳ Loading...";
+  
+  const res = await callServer("getData");
+  
+  btn.disabled = false;
+  btn.textContent = "🔄 Refresh Data";
+  
+  if (res.success) {
+    state = res.data;
+    saveState();
+    toast("✅ Data ter-load! (" + state.users.length + " users, " + state.pengajuan.length + " pengajuan)");
+  } else {
+    toast("❌ Gagal: " + res.message, "error");
   }
 }
 
@@ -379,32 +407,38 @@ function doLogout() {
 }
 
 // ============================================================
-// AUTO-SYNC SAAT PERTAMA KALI BUKA APP
+// AUTO-FETCH DATA SAAT HALAMAN LOGIN DIMUAT (FIX!)
 // ============================================================
-(async function restoreSession() {
+(async function initApp() {
   try {
     const raw = localStorage.getItem("pettyCashSession");
-    if (!raw) {
-      await autoSyncIfFirstTime();
-      return;
+    
+    // SELALU fetch data dari server saat halaman login dimuat
+    if (GAS_URL && !GAS_URL.includes("XXXXXX")) {
+      console.log("🔄 Fetching data dari server...");
+      const res = await callServer("getData");
+      if (res.success) {
+        state = res.data;
+        saveState();
+        console.log("✅ Data ter-load:", state.users.length, "users,", state.pengajuan.length, "pengajuan");
+      } else {
+        console.warn("⚠️ Gagal fetch:", res.message);
+      }
     }
-    const sess = JSON.parse(raw);
-    const found = state.users.find(u => u.id === sess.id);
-    if (found) { currentUser = found; startApp(); }
-  } catch(e) {}
-})();
-
-async function autoSyncIfFirstTime() {
-  if (state.pengajuan.length === 0 && GAS_URL && !GAS_URL.includes("XXXXXX")) {
-    console.log("Auto-sync pertama kali...");
-    const res = await callServer("getData");
-    if (res.success) {
-      state = res.data;
-      saveState();
-      console.log("Auto-sync berhasil:", state.pengajuan.length, "pengajuan");
+    
+    // Restore session kalau ada
+    if (raw) {
+      const sess = JSON.parse(raw);
+      const found = state.users.find(u => u.id === sess.id);
+      if (found) { 
+        currentUser = found; 
+        startApp(); 
+      }
     }
+  } catch(e) {
+    console.error("Init error:", e);
   }
-}
+})();
 
 // ============================================================
 // SIDEBAR & BOTTOM NAV
@@ -1489,11 +1523,6 @@ async function delUser(id) {
 // INIT
 // ============================================================
 document.getElementById("loginPass").addEventListener("keydown", e => { if(e.key==="Enter") doLogin(); });
-
-if (!GAS_URL || GAS_URL.includes("XXXXXX")) {
-  const ls = document.getElementById("loginSetup");
-  if (ls) ls.style.display = "none";
-}
 </script>
 </body>
 </html>
