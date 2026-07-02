@@ -244,7 +244,26 @@ const DEFAULT_STATE = {
 // ============================================================
 function fmtRp(n)  { return "Rp " + Number(n||0).toLocaleString("id-ID"); }
 function fmtDate(d){ if (!d) return "-"; return new Date(d+"T00:00:00").toLocaleDateString("id-ID",{day:'2-digit',month:'short',year:'numeric'}); }
+
+// Format Tanggal + Jam (baru)
+function fmtDateTime(d) {
+  if (!d) return "-";
+  // Cek apakah format datetime (YYYY-MM-DDTHH:MM) atau hanya tanggal (YYYY-MM-DD)
+  if (d.includes("T")) {
+    const dt = new Date(d);
+    return dt.toLocaleDateString("id-ID",{day:'2-digit',month:'short',year:'numeric'}) + 
+           " " + dt.toLocaleTimeString("id-ID",{hour:'2-digit',minute:'2-digit'});
+  }
+  // Fallback untuk data lama (hanya tanggal)
+  return fmtDate(d);
+}
+
 function today()   { return new Date().toISOString().split("T")[0]; }
+function nowDateTime() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 function calcTotal(items){ return items.reduce((s,i)=>s+(parseInt(i.jumlah)||0),0); }
 
 function showLoading(text="Memproses...") {
@@ -259,6 +278,21 @@ function toast(msg, type="success") {
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(()=>t.remove(), 3000);
+}
+
+// ============================================================
+// HELPER: KONVERSI URL GOOGLE DRIVE AGAR BISA DITAMPILKAN
+// ============================================================
+function getDriveImageUrl(url) {
+  if (!url) return "";
+  if (url.startsWith("data:image")) return url;
+  let fileId = "";
+  const match1 = url.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  const match2 = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (match1) fileId = match1[1];
+  else if (match2) fileId = match2[1];
+  if (fileId) return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`;
+  return url;
 }
 
 // ============================================================
@@ -296,20 +330,16 @@ async function setupFromLogin() {
 }
 
 // ============================================================
-// REFRESH DATA FROM LOGIN PAGE (FIX!)
+// REFRESH DATA FROM LOGIN PAGE
 // ============================================================
 async function refreshFromLogin() {
   const btn = document.getElementById("btnRefreshLogin");
   if (!btn) return;
-  
   btn.disabled = true;
   btn.textContent = "⏳ Loading...";
-  
   const res = await callServer("getData");
-  
   btn.disabled = false;
   btn.textContent = "🔄 Refresh Data";
-  
   if (res.success) {
     state = res.data;
     saveState();
@@ -407,13 +437,11 @@ function doLogout() {
 }
 
 // ============================================================
-// AUTO-FETCH DATA SAAT HALAMAN LOGIN DIMUAT (FIX!)
+// AUTO-FETCH DATA
 // ============================================================
 (async function initApp() {
   try {
     const raw = localStorage.getItem("pettyCashSession");
-    
-    // SELALU fetch data dari server saat halaman login dimuat
     if (GAS_URL && !GAS_URL.includes("XXXXXX")) {
       console.log("🔄 Fetching data dari server...");
       const res = await callServer("getData");
@@ -425,15 +453,10 @@ function doLogout() {
         console.warn("⚠️ Gagal fetch:", res.message);
       }
     }
-    
-    // Restore session kalau ada
     if (raw) {
       const sess = JSON.parse(raw);
       const found = state.users.find(u => u.id === sess.id);
-      if (found) { 
-        currentUser = found; 
-        startApp(); 
-      }
+      if (found) { currentUser = found; startApp(); }
     }
   } catch(e) {
     console.error("Init error:", e);
@@ -518,7 +541,7 @@ function buildPengajuanPage() {
   <div class="card">
     <h3>📋 Form Pengajuan Bon</h3>
     <div class="form-row" style="margin-bottom:14px;">
-      <div class="form-group"><label>Tanggal</label><input type="date" id="fTgl" value="${today()}"></div>
+      <div class="form-group"><label>Tanggal & Jam Pengajuan</label><input type="datetime-local" id="fTgl" value="${nowDateTime()}"></div>
       <div class="form-group"><label>Pengaju</label><input type="text" value="${currentUser.nama}" readonly></div>
     </div>
     <div class="form-group" style="margin-bottom:14px;">
@@ -565,7 +588,7 @@ function renderItemRows() {
       <td><input type="text" value="${item.keterangan}" oninput="draftItems[${i}].keterangan=this.value" placeholder="Keterangan"></td>
       <td><input type="number" value="${item.jumlah}" oninput="draftItems[${i}].jumlah=this.value;updateGrandTotal()" placeholder="0" min="0"></td>
       <td>${item.foto
-          ? `<img class="bon-thumb" src="${item.foto}" onclick="viewImg('${item.foto}')"><br>
+          ? `<img class="bon-thumb" src="${getDriveImageUrl(item.foto)}" onclick="viewImg('${item.foto.replace(/'/g, "\\'")}')"><br>
              <small style="cursor:pointer;color:#e74c3c;" onclick="draftItems[${i}].foto='';renderItemRows()">Hapus</small>`
           : `<input type="file" accept="image/*" capture="environment" style="font-size:11px;" onchange="readFoto(${i},this)">`}</td>
       <td>${draftItems.length>1 ? `<button class="btn btn-danger btn-sm" onclick="removeItemRow(${i})">✕</button>` : ""}</td>
@@ -593,7 +616,7 @@ function updateGrandTotal() {
 async function submitPengajuan() {
   const tgl  = document.getElementById("fTgl").value;
   const toko = document.getElementById("fToko").value;
-  if (!tgl) { toast("Isi tanggal.","error"); return; }
+  if (!tgl) { toast("Isi tanggal & jam.","error"); return; }
   const validItems = draftItems.filter(i=>i.namaBarang.trim() && (parseInt(i.jumlah)||0)>0);
   if (validItems.length===0) { toast("Minimal 1 item.","error"); return; }
   const totalJumlah = calcTotal(validItems);
@@ -625,8 +648,8 @@ function renderRiwayat() {
 
 function buildRiwayatPage() {
   let data = state.pengajuan.filter(p=>p.pengaju===currentUser.nama);
-  if (riwayatFilter.from) data = data.filter(r=>r.tanggal>=riwayatFilter.from);
-  if (riwayatFilter.to)   data = data.filter(r=>r.tanggal<=riwayatFilter.to);
+  if (riwayatFilter.from) data = data.filter(r=>(r.tanggal||"").slice(0,10)>=riwayatFilter.from);
+  if (riwayatFilter.to)   data = data.filter(r=>(r.tanggal||"").slice(0,10)<=riwayatFilter.to);
   if (riwayatFilter.stat) data = data.filter(r=>r.status===riwayatFilter.stat);
   if (riwayatFilter.search) {
     const q = riwayatFilter.search.toLowerCase();
@@ -644,11 +667,11 @@ function buildRiwayatPage() {
         const itemList = r.items.map(it=>`<div>• ${it.namaBarang} — ${fmtRp(it.jumlah)}</div>`).join("");
         const canEdit  = r.status === "pending";
         return `<tr>
-          <td>${fmtDate(r.tanggal)}</td>
+          <td>${fmtDateTime(r.tanggal)}</td>
           <td>${r.toko}</td>
           <td>${itemList}</td>
           <td style="font-weight:600;">${fmtRp(r.totalJumlah)}</td>
-          <td>${r.items.map(it=>it.foto?`<img class="bon-thumb" src="${it.foto}" onclick="viewImg('${it.foto}')">`:"-").join(" ")}</td>
+          <td>${r.items.map(it=>it.foto?`<img class="bon-thumb" src="${getDriveImageUrl(it.foto)}" onclick="viewImg('${it.foto.replace(/'/g, "\\'")}')">`:"-").join(" ")}</td>
           <td><span class="badge badge-${r.status}">${r.status}</span>${r.approvedBy?`<br><small>oleh ${r.approvedBy}</small>`:""}</td>
           <td>${r.catatan||"-"}</td>
           <td style="white-space:nowrap;">
@@ -665,7 +688,7 @@ function buildRiwayatPage() {
         return `<div class="m-card">
           <div class="m-card-header">
             <div>
-              <div class="m-card-title">${fmtDate(r.tanggal)} • ${r.toko}</div>
+              <div class="m-card-title">${fmtDateTime(r.tanggal)} • ${r.toko}</div>
               <div class="m-card-sub">${r.items.length} item</div>
             </div>
             <span class="badge badge-${r.status}">${r.status}</span>
@@ -698,7 +721,7 @@ function buildRiwayatPage() {
     </div>
     <div class="desktop-table">
       <table>
-        <thead><tr><th>Tanggal</th><th>Toko</th><th>Item</th><th>Total</th><th>Bon</th><th>Status</th><th>Catatan</th><th>Aksi</th></tr></thead>
+        <thead><tr><th>Tanggal & Jam</th><th>Toko</th><th>Item</th><th>Total</th><th>Bon</th><th>Status</th><th>Catatan</th><th>Aksi</th></tr></thead>
         <tbody>${tableRows}</tbody>
         <tfoot><tr><td colspan="3" style="font-weight:600;text-align:right;">Grand Total</td><td colspan="5" style="font-weight:700;color:#667eea;">${fmtRp(grandTotal)}</td></tr></tfoot>
       </table>
@@ -713,21 +736,26 @@ function resetRiwayatFilter() {
 }
 
 function viewImg(src) {
+  const displaySrc = getDriveImageUrl(src);
   openModal(`<div style="text-align:center;">
     <h3 style="margin-bottom:12px;">Foto Bon</h3>
-    <img src="${src}" style="max-width:100%;border-radius:8px;">
+    <img src="${displaySrc}" style="max-width:100%;border-radius:8px;" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22200%22%3E%3Crect fill=%22%23ddd%22 width=%22200%22 height=%22200%22/%3E%3Ctext fill=%22%23999%22 x=%2250%%22 y=%2250%%22 text-anchor=%22middle%22 dy=%22.3em%22%3EGambar tidak tersedia%3C/text%3E%3C/svg%3E'">
     <div style="margin-top:16px;"><button class="btn btn-sm" onclick="closeModal()">Tutup</button></div>
   </div>`);
 }
 
 // ============================================================
-// CETAK PDF
+// CETAK PDF - SEMUA TEKS HITAM
 // ============================================================
 function cetakSatuPengajuan(id) {
   const r = state.pengajuan.find(x=>x.id===id);
   if (!r) return;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
+  
+  // Set warna teks ke HITAM untuk semua dokumen
+  doc.setTextColor(0, 0, 0);
+  
   doc.setFontSize(16); doc.setFont(undefined,"bold");
   doc.text("BUKTI PENGAJUAN PETTY CASH", 105, 18, { align:"center" });
   doc.setFontSize(10); doc.setFont(undefined,"normal");
@@ -739,23 +767,29 @@ function cetakSatuPengajuan(id) {
     y += 7;
   };
   addInfo("No. Pengajuan", "#" + r.id);
-  addInfo("Tanggal",       fmtDate(r.tanggal));
+  addInfo("Tanggal & Jam", fmtDateTime(r.tanggal));
   addInfo("Pengaju",       r.pengaju);
   addInfo("Asal Toko",     r.toko);
   addInfo("Status",        r.status.toUpperCase());
   if (r.approvedBy) addInfo("Diproses oleh", r.approvedBy);
   if (r.catatan)    addInfo("Catatan",        r.catatan);
   y += 3;
+  
+  // Set warna teks tabel ke HITAM
   doc.autoTable({
     startY: y,
     head: [["No","Nama Barang","Kategori","Keterangan","Jumlah (Rp)"]],
     body: r.items.map((it,i) => [i+1, it.namaBarang, it.kategori, it.keterangan||"-", Number(it.jumlah).toLocaleString("id-ID")]),
     foot: [["","","","Total", Number(r.totalJumlah).toLocaleString("id-ID")]],
-    styles: { fontSize:10 }, headStyles: { fillColor:[102,126,234] },
-    footStyles: { fillColor:[240,240,240], fontStyle:"bold" }, columnStyles: { 4: { halign:"right" } }
+    styles: { fontSize:10, textColor: [0,0,0] },
+    headStyles: { fillColor:[102,126,234], textColor: [0,0,0], fontStyle:"bold" },
+    footStyles: { fillColor:[240,240,240], textColor: [0,0,0], fontStyle:"bold" },
+    columnStyles: { 4: { halign:"right" } }
   });
+  
   const finalY = doc.lastAutoTable.finalY + 16;
   doc.setFontSize(10);
+  doc.setTextColor(0, 0, 0);
   doc.text("Pengaju,", 30, finalY, { align:"center" });
   doc.text("Mengetahui,", 105, finalY, { align:"center" });
   doc.text("Admin,", 175, finalY, { align:"center" });
@@ -767,14 +801,17 @@ function cetakSatuPengajuan(id) {
 function cetakPDFStaf() {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
+  doc.setTextColor(0, 0, 0);
   doc.setFontSize(16); doc.text("Laporan Petty Cash - " + currentUser.nama, 14, 18);
   doc.setFontSize(10); doc.text("Dicetak: " + new Date().toLocaleString("id-ID"), 14, 26);
   const rows = state.pengajuan.filter(p=>p.pengaju===currentUser.nama).map(r => [
-    fmtDate(r.tanggal), r.toko, r.items.map(it=>it.namaBarang).join(", "), fmtRp(r.totalJumlah), r.status
+    fmtDateTime(r.tanggal), r.toko, r.items.map(it=>it.namaBarang).join(", "), fmtRp(r.totalJumlah), r.status
   ]);
   doc.autoTable({
-    startY: 32, head: [["Tanggal","Toko","Item","Total","Status"]],
-    body: rows, styles:{ fontSize:9 }, headStyles:{ fillColor:[102,126,234] }
+    startY: 32, head: [["Tanggal & Jam","Toko","Item","Total","Status"]],
+    body: rows, 
+    styles:{ fontSize:9, textColor: [0,0,0] }, 
+    headStyles:{ fillColor:[102,126,234], textColor: [0,0,0] }
   });
   doc.save("laporan-" + currentUser.nama.replace(/\s/g,"_") + ".pdf");
 }
@@ -789,10 +826,14 @@ function editPengajuanStaf(id) {
   if (!r || r.status !== "pending") { toast("Tidak bisa diedit.","error"); return; }
   editStafDraftItems = r.items.map(i=>({...i}));
   const tokoOpts = state.toko.map(t=>`<option ${t===r.toko?'selected':''}>${t}</option>`).join("");
+  // Konversi tanggal ke format datetime-local
+  let tglValue = r.tanggal;
+  if (tglValue && !tglValue.includes("T")) tglValue = tglValue + "T00:00";
+  
   openModal(`
   <h3>✏️ Edit Pengajuan #${r.id}</h3>
   <div class="form-row" style="margin-bottom:12px;">
-    <div class="form-group"><label>Tanggal</label><input type="date" id="esTgl" value="${r.tanggal}"></div>
+    <div class="form-group"><label>Tanggal & Jam</label><input type="datetime-local" id="esTgl" value="${tglValue}"></div>
     <div class="form-group"><label>Toko</label><select id="esToko">${tokoOpts}</select></div>
   </div>
   <div style="overflow-x:auto;">
@@ -820,7 +861,7 @@ function renderEsItemRows() {
       <td><input type="text" value="${item.keterangan||''}" oninput="editStafDraftItems[${i}].keterangan=this.value"></td>
       <td><input type="number" value="${item.jumlah}" oninput="editStafDraftItems[${i}].jumlah=this.value;updateEsTotal()" min="0"></td>
       <td>${item.foto
-        ? `<img class="bon-thumb" src="${item.foto}"><br><small style="cursor:pointer;color:#e74c3c;" onclick="editStafDraftItems[${i}].foto='';renderEsItemRows()">Hapus</small>`
+        ? `<img class="bon-thumb" src="${getDriveImageUrl(item.foto)}" onclick="viewImg('${item.foto.replace(/'/g, "\\'")}')"><br><small style="cursor:pointer;color:#e74c3c;" onclick="editStafDraftItems[${i}].foto='';renderEsItemRows()">Hapus</small>`
         : `<input type="file" accept="image/*" capture="environment" style="font-size:11px;" onchange="readEsFoto(${i},this)">`}</td>
       <td>${editStafDraftItems.length>1?`<button class="btn btn-danger btn-sm" onclick="removeEsItemRow(${i})">✕</button>`:""}</td>
     </tr>`).join("");
@@ -916,9 +957,9 @@ function renderDashboardAdmin() {
     <h3>Pengajuan Terbaru</h3>
     <div class="desktop-table">
       <table>
-        <thead><tr><th>Tanggal</th><th>Pengaju</th><th>Toko</th><th>Item</th><th>Total</th><th>Status</th></tr></thead>
+        <thead><tr><th>Tanggal & Jam</th><th>Pengaju</th><th>Toko</th><th>Item</th><th>Total</th><th>Status</th></tr></thead>
         <tbody>${[...state.pengajuan].reverse().slice(0,5).map(r=>`
-          <tr><td>${fmtDate(r.tanggal)}</td><td>${r.pengaju}</td><td>${r.toko}</td>
+          <tr><td>${fmtDateTime(r.tanggal)}</td><td>${r.pengaju}</td><td>${r.toko}</td>
           <td>${r.items.length} item</td><td>${fmtRp(r.totalJumlah)}</td>
           <td><span class="badge badge-${r.status}">${r.status}</span></td></tr>`).join("")}
         </tbody>
@@ -975,7 +1016,10 @@ function renderCharts() {
     const key = d.toISOString().split("T")[0];
     byDate[key] = 0;
   }
-  state.pengajuan.forEach(r => { if (byDate[r.tanggal] !== undefined) byDate[r.tanggal] += r.totalJumlah; });
+  state.pengajuan.forEach(r => { 
+    const tglKey = (r.tanggal||"").slice(0,10);
+    if (byDate[tglKey] !== undefined) byDate[tglKey] += r.totalJumlah; 
+  });
   const ctx3 = document.getElementById("chartTren");
   if (ctx3) {
     chartInstances.tren = new Chart(ctx3, {
@@ -1001,8 +1045,8 @@ function renderApprovePage() {
 
 function buildApprovePage() {
   let data = [...state.pengajuan];
-  if (approveFilter.from)  data = data.filter(r=>r.tanggal>=approveFilter.from);
-  if (approveFilter.to)    data = data.filter(r=>r.tanggal<=approveFilter.to);
+  if (approveFilter.from)  data = data.filter(r=>(r.tanggal||"").slice(0,10)>=approveFilter.from);
+  if (approveFilter.to)    data = data.filter(r=>(r.tanggal||"").slice(0,10)<=approveFilter.to);
   if (approveFilter.stat)  data = data.filter(r=>r.status===approveFilter.stat);
   if (approveFilter.toko)  data = data.filter(r=>r.toko===approveFilter.toko);
   if (approveFilter.search) {
@@ -1019,9 +1063,9 @@ function buildApprovePage() {
     ? `<tr><td colspan="7" style="text-align:center;color:#aaa;padding:20px;">Tidak ada data</td></tr>`
     : data.map(r => {
         const itemList = r.items.map(it=>`<div>• ${it.namaBarang} — ${fmtRp(it.jumlah)}</div>`).join("");
-        const bonList  = r.items.map(it=>it.foto?`<img class="bon-thumb" src="${it.foto}" onclick="viewImg('${it.foto}')">`:"-").join(" ");
+        const bonList  = r.items.map(it=>it.foto?`<img class="bon-thumb" src="${getDriveImageUrl(it.foto)}" onclick="viewImg('${it.foto.replace(/'/g, "\\'")}')">`:"-").join(" ");
         return `<tr>
-          <td>${fmtDate(r.tanggal)}</td>
+          <td>${fmtDateTime(r.tanggal)}</td>
           <td>${r.pengaju}<br><small style="color:#888;">${r.toko}</small></td>
           <td>${itemList}</td>
           <td style="font-weight:600;white-space:nowrap;">${fmtRp(r.totalJumlah)}</td>
@@ -1048,7 +1092,7 @@ function buildApprovePage() {
       <div class="m-card-header">
         <div>
           <div class="m-card-title">${r.pengaju}</div>
-          <div class="m-card-sub">${fmtDate(r.tanggal)} • ${r.toko}</div>
+          <div class="m-card-sub">${fmtDateTime(r.tanggal)} • ${r.toko}</div>
         </div>
         <span class="badge badge-${r.status}">${r.status}</span>
       </div>
@@ -1085,7 +1129,7 @@ function buildApprovePage() {
     </div>
     <div class="desktop-table">
       <table>
-        <thead><tr><th>Tgl</th><th>Pengaju</th><th>Item</th><th>Total</th><th>Bon</th><th>Status</th><th>Aksi</th></tr></thead>
+        <thead><tr><th>Tgl & Jam</th><th>Pengaju</th><th>Item</th><th>Total</th><th>Bon</th><th>Status</th><th>Aksi</th></tr></thead>
         <tbody>${tableRows}</tbody>
         <tfoot><tr><td colspan="3" style="font-weight:600;text-align:right;">Grand Total</td><td colspan="4" style="font-weight:700;color:#667eea;">${fmtRp(grandTotal)}</td></tr></tfoot>
       </table>
@@ -1136,7 +1180,7 @@ function kirimWA(id) {
   const itemList = r.items.map(it => `• ${it.namaBarang} (${it.kategori}) - ${fmtRp(it.jumlah)}`).join("\n");
   const msg = `*🔔 PENGAJUAN PETTY CASH*\n\n` +
               `No: #${r.id}\n` +
-              `Tgl: ${fmtDate(r.tanggal)}\n` +
+              `Tgl: ${fmtDateTime(r.tanggal)}\n` +
               `Pengaju: ${r.pengaju}\n` +
               `Toko: ${r.toko}\n` +
               `Total: *${fmtRp(r.totalJumlah)}*\n\n` +
@@ -1164,10 +1208,15 @@ function editPengajuan(id) {
   if (!r) return;
   editDraftItems = r.items.map(i=>({...i}));
   const tokoOpts = state.toko.map(t=>`<option ${t===r.toko?'selected':''}>${t}</option>`).join("");
+  
+  // Konversi tanggal ke format datetime-local
+  let tglValue = r.tanggal;
+  if (tglValue && !tglValue.includes("T")) tglValue = tglValue + "T00:00";
+  
   openModal(`
   <h3>✏️ Edit Pengajuan #${r.id}</h3>
   <div class="form-row" style="margin-bottom:12px;">
-    <div class="form-group"><label>Tanggal</label><input type="date" id="eTgl" value="${r.tanggal}"></div>
+    <div class="form-group"><label>Tanggal & Jam</label><input type="datetime-local" id="eTgl" value="${tglValue}"></div>
     <div class="form-group"><label>Toko</label><select id="eToko">${tokoOpts}</select></div>
   </div>
   <div class="form-row" style="margin-bottom:12px;">
@@ -1254,16 +1303,19 @@ async function hapusPengajuan(id) {
 function cetakPDFAdmin() {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF("landscape");
+  doc.setTextColor(0, 0, 0);
   doc.setFontSize(16); doc.text("Laporan Petty Cash", 14, 18);
   doc.setFontSize(10); doc.text("Dicetak: " + new Date().toLocaleString("id-ID"), 14, 26);
   const rows = state.pengajuan.map(r => [
-    fmtDate(r.tanggal), r.pengaju + " / " + r.toko,
+    fmtDateTime(r.tanggal), r.pengaju + " / " + r.toko,
     r.items.map(it=>it.namaBarang).join(", "),
     fmtRp(r.totalJumlah), r.status
   ]);
   doc.autoTable({
-    startY: 32, head: [["Tanggal","Pengaju/Toko","Item","Total","Status"]],
-    body: rows, styles:{ fontSize:9 }, headStyles:{ fillColor:[102,126,234] }
+    startY: 32, head: [["Tanggal & Jam","Pengaju/Toko","Item","Total","Status"]],
+    body: rows, 
+    styles:{ fontSize:9, textColor: [0,0,0] }, 
+    headStyles:{ fillColor:[102,126,234], textColor: [0,0,0] }
   });
   doc.save("laporan-petty-cash.pdf");
 }
